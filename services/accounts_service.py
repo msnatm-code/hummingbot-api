@@ -66,6 +66,7 @@ class AccountsService:
     potential_wrapped_tokens = ["ETH", "SOL", "BNB", "POL", "AVAX"]
 
     def __init__(self,
+                 db_manager: AsyncDatabaseManager,
                  account_update_interval: int = 5,
                  default_quote: str = "USDT",
                  gateway_url: str = "http://localhost:15888"):
@@ -73,6 +74,7 @@ class AccountsService:
         Initialize the AccountsService.
 
         Args:
+            db_manager: AsyncDatabaseManager for persistence (shared, created once at startup)
             account_update_interval: How often to update account states in minutes (default: 5)
             default_quote: Default quote currency for trading pairs (default: "USDT")
             gateway_url: URL for Gateway service (default: "http://localhost:15888")
@@ -88,9 +90,9 @@ class AccountsService:
         # Cache for storing last successful prices by trading pair (per-instance)
         self._last_known_prices = {}
 
-        # Database setup for account states and orders
-        self.db_manager = AsyncDatabaseManager(settings.database.url)
-        self._db_initialized = False
+        # Database setup for account states and orders (shared manager injected from main.py;
+        # tables are created once at startup so no per-service bootstrap is needed)
+        self.db_manager = db_manager
 
         # Services injected from main.py
         self._connector_service = None  # UnifiedConnectorService
@@ -116,12 +118,6 @@ class AccountsService:
         )
         self._gateway_poller_started = False
 
-    async def ensure_db_initialized(self):
-        """Ensure database is initialized before using it."""
-        if not self._db_initialized:
-            await self.db_manager.create_tables()
-            self._db_initialized = True
-    
     def get_accounts_state(self):
         return self.accounts_state
 
@@ -279,8 +275,6 @@ class AccountsService:
         # accounts_state cannot raise "dictionary changed size during iteration"
         accounts_state_snapshot = {account: dict(connectors) for account, connectors in self.accounts_state.items()}
 
-        await self.ensure_db_initialized()
-
         try:
             # Generate a single timestamp for this entire snapshot
             snapshot_timestamp = datetime.now(timezone.utc)
@@ -321,8 +315,6 @@ class AccountsService:
 
         :return: Tuple of (data, next_cursor, has_more).
         """
-        await self.ensure_db_initialized()
-
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -665,8 +657,6 @@ class AccountsService:
         """
         Get current state for a specific account from database.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -694,8 +684,6 @@ class AccountsService:
             end_time: End time filter
             interval: Sampling interval (5m, 15m, 30m, 1h, 4h, 12h, 1d)
         """
-        await self.ensure_db_initialized()
-
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -715,8 +703,6 @@ class AccountsService:
         """
         Get current state for a specific connector.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -736,8 +722,6 @@ class AccountsService:
         """
         Get historical state for a specific connector with pagination.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -757,8 +741,6 @@ class AccountsService:
         """
         Get all unique tokens across all accounts and connectors.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -777,8 +759,6 @@ class AccountsService:
         """
         Get current state of a specific token across all accounts.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -791,8 +771,6 @@ class AccountsService:
         """
         Get total portfolio value, optionally filtered by account.
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 repository = AccountRepository(session)
@@ -1045,8 +1023,6 @@ class AccountsService:
                         start_time: Optional[int] = None, end_time: Optional[int] = None,
                         limit: int = 100, offset: int = 0) -> List[Dict]:
         """Get order history using OrderRepository."""
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 order_repo = OrderRepository(session)
@@ -1068,8 +1044,6 @@ class AccountsService:
     async def get_active_orders_history(self, account_name: Optional[str] = None, connector_name: Optional[str] = None,
                                        trading_pair: Optional[str] = None) -> List[Dict]:
         """Get active orders from database using OrderRepository."""
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 order_repo = OrderRepository(session)
@@ -1086,8 +1060,6 @@ class AccountsService:
     async def get_orders_summary(self, account_name: Optional[str] = None, start_time: Optional[int] = None,
                                 end_time: Optional[int] = None) -> Dict:
         """Get order summary statistics using OrderRepository."""
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 order_repo = OrderRepository(session)
@@ -1112,8 +1084,6 @@ class AccountsService:
                         start_time: Optional[int] = None, end_time: Optional[int] = None,
                         limit: int = 100, offset: int = 0) -> List[Dict]:
         """Get trade history using TradeRepository."""
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 trade_repo = TradeRepository(session)
@@ -1153,8 +1123,6 @@ class AccountsService:
         Returns:
             List of funding payment dictionaries
         """
-        await self.ensure_db_initialized()
-        
         try:
             async with self.db_manager.get_session_context() as session:
                 funding_repo = FundingRepository(session)
@@ -1183,8 +1151,6 @@ class AccountsService:
         Returns:
             Dictionary with total funding fees information
         """
-        await self.ensure_db_initialized()
-
         try:
             async with self.db_manager.get_session_context() as session:
                 funding_repo = FundingRepository(session)
