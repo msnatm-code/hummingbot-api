@@ -36,6 +36,45 @@ class DockerService:
         except DockerException as e:
             logger.error(f"It was not possible to connect to Docker. Please make sure Docker is running. Error: {e}")
 
+    def _resolve_bots_host_path(self) -> str:
+        """
+        Resolve the real host path for the shared bots directory.
+
+        When the API itself runs in Docker, os.getcwd() points to an in-container
+        path like /hummingbot-api, which is not a valid bind source for sibling
+        containers. In that case we inspect this container's mounts and reuse the
+        host source that is bound to /hummingbot-api/bots.
+        """
+        container_bots_path = os.path.join(self.SOURCE_PATH, "bots")
+
+        try:
+            current_hostname = os.environ.get("HOSTNAME")
+            if current_hostname:
+                current_container = self.client.containers.get(current_hostname)
+                for mount in current_container.attrs.get("Mounts", []):
+                    if mount.get("Destination") == container_bots_path:
+                        source = mount.get("Source")
+                        if source:
+                            return source
+        except Exception as e:
+            logger.warning(f"Failed to resolve host bots path from current container mounts: {e}")
+
+        return container_bots_path
+
+    @staticmethod
+    def _normalize_bind_source_path(path: str) -> str:
+        """
+        Preserve Windows-style absolute paths when running inside Linux containers.
+
+        On Linux, os.path.abspath("C:\\Users\\...") incorrectly prefixes the current
+        working directory because the drive-letter path is not considered absolute.
+        Docker Desktop expects the original Windows host path string unchanged.
+        """
+        normalized = path.replace("\\", "/")
+        if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/":
+            return normalized
+        return os.path.abspath(path)
+
     def get_active_containers(self, name_filter: str = None):
         try:
             all_containers = self.client.containers.list(filters={"status": "running"})
@@ -162,7 +201,7 @@ class DockerService:
             return {"success": False, "message": str(e)}
 
     def create_hummingbot_instance(self, config: V2ControllerDeployment):
-        bots_path = os.environ.get('BOTS_PATH', self.SOURCE_PATH)  # Default to 'SOURCE_PATH' if BOTS_PATH is not set
+        bots_path = os.environ.get('BOTS_PATH') or self._resolve_bots_host_path()
         instance_name = config.instance_name
         instance_dir = os.path.join("bots", 'instances', instance_name)
         if not os.path.exists(instance_dir):
@@ -232,15 +271,18 @@ class DockerService:
         client_config['instance_id'] = instance_name
         fs_util.dump_dict_to_yaml(conf_file_path, client_config)
 
-        # Set up Docker volumes
-        instance_conf = os.path.abspath(os.path.join(bots_path, instance_dir, 'conf'))
-        instance_connectors = os.path.abspath(os.path.join(bots_path, instance_dir, 'conf', 'connectors'))
-        instance_scripts = os.path.abspath(os.path.join(bots_path, instance_dir, 'conf', 'scripts'))
-        instance_controllers = os.path.abspath(os.path.join(bots_path, instance_dir, 'conf', 'controllers'))
-        instance_data = os.path.abspath(os.path.join(bots_path, instance_dir, 'data'))
-        instance_logs = os.path.abspath(os.path.join(bots_path, instance_dir, 'logs'))
-        shared_scripts = os.path.abspath(os.path.join(bots_path, "bots", 'scripts'))
-        shared_controllers = os.path.abspath(os.path.join(bots_path, "bots", 'controllers'))
+        # Set up Docker volumes. `bots_path` points to the host's shared `bots`
+        # directory root, so we must build paths relative to that root instead of
+        # prefixing another `bots/` segment.
+        host_instance_dir = os.path.join(bots_path, 'instances', instance_name)
+        instance_conf = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'conf'))
+        instance_connectors = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'conf', 'connectors'))
+        instance_scripts = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'conf', 'scripts'))
+        instance_controllers = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'conf', 'controllers'))
+        instance_data = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'data'))
+        instance_logs = self._normalize_bind_source_path(os.path.join(host_instance_dir, 'logs'))
+        shared_scripts = self._normalize_bind_source_path(os.path.join(bots_path, 'scripts'))
+        shared_controllers = self._normalize_bind_source_path(os.path.join(bots_path, 'controllers'))
 
         volumes = {
             instance_conf: {'bind': '/home/hummingbot/conf', 'mode': 'rw'},

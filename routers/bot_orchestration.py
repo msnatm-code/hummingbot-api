@@ -829,6 +829,29 @@ async def deploy_v2_script(
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         unique_instance_name = f"{deployment.instance_name}-{timestamp}"
 
+        # When a script is provided without an explicit config, generate a minimal
+        # V2 script config so DockerService can copy it into the instance's
+        # /home/hummingbot/conf/scripts mount and set SCRIPT_CONFIG correctly.
+        if deployment.script and not deployment.script_config:
+            script_config_filename = f"{deployment.instance_name}-{timestamp}.yml"
+            script_config_content = {
+                "script_file_name": f"{deployment.script}.py",
+            }
+
+            # v2_with_controllers expects a controllers_config field in practice,
+            # even when the deployment is used as a plain script entrypoint.
+            if deployment.script == "v2_with_controllers":
+                script_config_content["controllers_config"] = []
+
+            scripts_dir = os.path.join("conf", "scripts")
+            script_config_path = os.path.join(scripts_dir, script_config_filename)
+            fs_util.dump_dict_to_yaml(script_config_path, script_config_content)
+            deployment.script_config = script_config_filename
+            logging.info(
+                f"Generated script config for V2 script deployment: {script_config_filename} "
+                f"with content: {script_config_content}"
+            )
+
         # Update deployment with unique name
         deployment.instance_name = unique_instance_name
 
