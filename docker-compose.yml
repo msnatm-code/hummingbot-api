@@ -1,17 +1,13 @@
 services:
   hummingbot-api:
     container_name: hummingbot-api
-    # MiTrade fork: build vanuit lokale source zodat fixes in bot_orchestration.py
-    # en docker_service.py niet overschreven worden bij docker compose pull.
-    # Upstream image: hummingbot/hummingbot-api:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: msnatm-code/hummingbot-api:local
+    image: hummingbot/hummingbot-api:latest
     ports:
       - "8001:8000"
     volumes:
       - ./bots:/hummingbot-api/bots
+      - c:/Users/dubbe/MiTradeHb/hummingbot_ext/connectors/bybit_eu:/opt/conda/envs/hummingbot-api/lib/python3.12/site-packages/hummingbot/connector/exchange/bybit_eu:ro
+      - c:/Users/dubbe/MiTradeHb/hummingbot_ext/connectors/bybit_eu_testnet:/opt/conda/envs/hummingbot-api/lib/python3.12/site-packages/hummingbot/connector/exchange/bybit_eu_testnet:ro
       - /var/run/docker.sock:/var/run/docker.sock
       # Host metrics: mount the host's /proc read-only so the /system/resources
       # route reports HOST CPU/RAM/load instead of the container's.

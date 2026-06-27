@@ -11,6 +11,16 @@ import aiomqtt
 logger = logging.getLogger(__name__)
 
 
+def _to_canonical_bot_id(bot_id: str) -> str:
+    """Normalize bot identifiers to the docker/container naming convention."""
+    return bot_id.replace("_", "-")
+
+
+def _to_mqtt_bot_id(bot_id: str) -> str:
+    """Normalize bot identifiers to the MQTT bridge topic convention."""
+    return bot_id.replace("-", "_").replace(".", "/")
+
+
 class MQTTManager:
     """
     Manages MQTT connections and message handling for Hummingbot bot communication.
@@ -126,8 +136,9 @@ class MQTTManager:
                 namespace, bot_id, channel = topic_parts[0], topic_parts[1], "/".join(topic_parts[2:])
                 # Only process if it's the expected namespace
                 if namespace == "hbot":
+                    canonical_bot_id = _to_canonical_bot_id(bot_id)
                     # Auto-discover bot
-                    self._discovered_bots[bot_id] = time.time()
+                    self._discovered_bots[canonical_bot_id] = time.time()
                     # Parse message
                     try:
                         data = json.loads(message.payload.decode("utf-8"))
@@ -136,35 +147,37 @@ class MQTTManager:
 
                     # Route to appropriate handler based on Hummingbot's topics
                     if channel == "log":
-                        await self._handle_log(bot_id, data)
+                        await self._handle_log(canonical_bot_id, data)
                     elif channel == "notify":
-                        await self._handle_notify(bot_id, data)
+                        await self._handle_notify(canonical_bot_id, data)
                     elif channel == "status_updates":
-                        await self._handle_status(bot_id, data)
+                        await self._handle_status(canonical_bot_id, data)
                     elif channel == "hb":  # heartbeat
-                        await self._handle_heartbeat(bot_id, data)
+                        await self._handle_heartbeat(canonical_bot_id, data)
                     elif channel == "events":
-                        await self._handle_events(bot_id, data)
+                        await self._handle_events(canonical_bot_id, data)
                     elif channel == "performance":
-                        await self._handle_performance(bot_id, data)
+                        await self._handle_performance(canonical_bot_id, data)
                     elif channel.startswith("response/"):
-                        await self._handle_command_response(bot_id, channel, data)
+                        await self._handle_command_response(canonical_bot_id, channel, data)
                     elif channel.startswith("external/event/"):
-                        await self._handle_external_event(bot_id, channel, data)
+                        await self._handle_external_event(canonical_bot_id, channel, data)
                     elif channel in ["history", "start", "stop", "config", "import_strategy"]:
                         # These are command channels - responses should come on response/* topics
-                        logger.debug(f"Command channel '{channel}' for bot {bot_id} - waiting for response")
+                        logger.debug(f"Command channel '{channel}' for bot {canonical_bot_id} - waiting for response")
                     else:
-                        logger.info(f"Unknown channel '{channel}' for bot {bot_id}")
+                        logger.info(f"Unknown channel '{channel}' for bot {canonical_bot_id}")
 
                     # Call custom handlers
                     for pattern, handler in self._handlers.items():
                         if self._match_topic(pattern, topic):
                             if asyncio.iscoroutinefunction(handler):
-                                await handler(bot_id, channel, data)
+                                await handler(canonical_bot_id, channel, data)
                             else:
                                 # Run sync handler in executor
-                                await asyncio.get_event_loop().run_in_executor(None, handler, bot_id, channel, data)
+                                await asyncio.get_event_loop().run_in_executor(
+                                    None, handler, canonical_bot_id, channel, data
+                                )
         except Exception as e:
             logger.error(f"Error processing message from {message.topic}: {e}", exc_info=True)
 
@@ -397,8 +410,8 @@ class MQTTManager:
             logger.error("Not connected to MQTT broker")
             return False
 
-        # Convert dots to slashes for MQTT topic
-        mqtt_bot_id = bot_id.replace(".", "/")
+        # Convert API/container bot IDs to the MQTT bridge topic convention
+        mqtt_bot_id = _to_mqtt_bot_id(bot_id)
 
         # Use the correct topic for each command
         topic = f"hbot/{mqtt_bot_id}/{command}"
@@ -437,8 +450,8 @@ class MQTTManager:
             logger.error("Not connected to MQTT broker")
             return False
 
-        # Convert dots to slashes for MQTT topic
-        mqtt_bot_id = bot_id.replace(".", "/")
+        # Convert API/container bot IDs to the MQTT bridge topic convention
+        mqtt_bot_id = _to_mqtt_bot_id(bot_id)
 
         # Use the correct topic for each command
         topic = f"hbot/{mqtt_bot_id}/{command}"
@@ -525,8 +538,8 @@ class MQTTManager:
     async def subscribe_to_bot(self, bot_id: str):
         """Subscribe to all topics for a specific bot."""
         if self._connected and self._client:
-            # Convert dots to slashes for MQTT topic
-            mqtt_bot_id = bot_id.replace(".", "/")
+            # Convert API/container bot IDs to the MQTT bridge topic convention
+            mqtt_bot_id = _to_mqtt_bot_id(bot_id)
 
             # Subscribe to all topics for this specific bot
             topic = f"hbot/{mqtt_bot_id}/#"
