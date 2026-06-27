@@ -300,6 +300,9 @@ class DockerService:
         shared_scripts = self._normalize_bind_source_path(os.path.join(bots_path, 'scripts'))
         shared_controllers = self._normalize_bind_source_path(os.path.join(bots_path, 'controllers'))
 
+        bybit_eu_path = os.environ.get('BYBIT_EU_PATH')
+        bybit_eu_testnet_path = os.environ.get('BYBIT_EU_TESTNET_PATH')
+
         volumes = {
             instance_conf: {'bind': '/home/hummingbot/conf', 'mode': 'rw'},
             instance_connectors: {'bind': '/home/hummingbot/conf/connectors', 'mode': 'rw'},
@@ -310,6 +313,25 @@ class DockerService:
             shared_scripts: {'bind': '/home/hummingbot/scripts', 'mode': 'rw'},
             shared_controllers: {'bind': '/home/hummingbot/controllers', 'mode': 'rw'},
         }
+
+        if bybit_eu_path:
+            volumes[self._normalize_bind_source_path(bybit_eu_path)] = {
+                'bind': '/home/hummingbot/hummingbot/connector/exchange/bybit_eu',
+                'mode': 'ro'
+            }
+        if bybit_eu_testnet_path:
+            volumes[self._normalize_bind_source_path(bybit_eu_testnet_path)] = {
+                'bind': '/home/hummingbot/hummingbot/connector/exchange/bybit_eu_testnet',
+                'mode': 'ro'
+            }
+
+        logger.warning(
+            "VOLUMES: %s | bots_path=%s | bybit_eu_path=%s | bybit_eu_testnet_path=%s",
+            volumes,
+            bots_path,
+            bybit_eu_path,
+            bybit_eu_testnet_path,
+        )
 
         # Set up environment variables
         environment = {}
