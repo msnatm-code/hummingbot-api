@@ -1,6 +1,7 @@
 import logging
 import os
 import shutil
+from pathlib import Path
 import threading
 import time
 from typing import Dict
@@ -74,6 +75,23 @@ class DockerService:
         if len(normalized) >= 3 and normalized[1] == ":" and normalized[2] == "/":
             return normalized
         return os.path.abspath(path)
+
+    @classmethod
+    def _resolve_host_bots_root_from_env(cls, configured_path: str) -> str:
+        """
+        Accept either the project root (e.g. C:/Users/.../MiTAHbot) or the bots root
+        (e.g. C:/Users/.../MiTAHbot/bots) and always return the host bots root.
+        """
+        normalized = cls._normalize_bind_source_path(configured_path)
+        return normalized if normalized.rstrip("/").endswith("/bots") else normalized.rstrip("/") + "/bots"
+
+    @staticmethod
+    def _normalize_script_module_name(script_name: str) -> str:
+        """Return a script filename with exactly one .py suffix."""
+        if not script_name:
+            return script_name
+        script_leaf = Path(script_name).name
+        return script_leaf if script_leaf.endswith(".py") else f"{script_leaf}.py"
 
     def get_active_containers(self, name_filter: str = None):
         try:
@@ -213,7 +231,12 @@ class DockerService:
         return resolved_path
 
     def create_hummingbot_instance(self, config: V2ControllerDeployment):
-        bots_path = os.environ.get('BOTS_PATH') or self._resolve_bots_host_path()
+        configured_bots_path = os.environ.get('BOTS_PATH')
+        bots_path = (
+            self._resolve_host_bots_root_from_env(configured_bots_path)
+            if configured_bots_path
+            else self._resolve_bots_host_path()
+        )
         instance_name = config.instance_name
         instance_dir = os.path.join("bots", 'instances', instance_name)
         # Defense in depth: ensure the resolved paths stay within their allowed base directories
@@ -354,13 +377,25 @@ class DockerService:
                 'max-size': '10m',
                 'max-file': "5",
             })
+
+        quickstart_parts = [
+            "conda activate hummingbot",
+            "python ./bin/hummingbot_quickstart.py",
+        ]
+
+        if config.script_config:
+            quickstart_parts[-1] += f' --script-conf "{config.script_config}" --config-password "{password}"'
+
+        quickstart_command = " && ".join(quickstart_parts)
+
         try:
             self.client.containers.run(
                 image=config.image,
                 name=instance_name,
+                command=["/bin/bash", "-lc", quickstart_command],
                 volumes=volumes,
                 environment=environment,
-                network_mode="host",
+                network="mitahbot_mitahbot-net",
                 detach=True,
                 tty=True,
                 stdin_open=True,

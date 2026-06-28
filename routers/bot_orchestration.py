@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -15,6 +16,17 @@ from utils.file_system import fs_util
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Bot Orchestration"], prefix="/bot-orchestration")
+
+
+def _normalize_script_file_name(script_name: str) -> str:
+    """Ensure generated script config points to a filename with a single .py suffix."""
+    script_leaf = Path(script_name).name
+    return script_leaf if script_leaf.endswith(".py") else f"{script_leaf}.py"
+
+
+def _normalize_script_strategy_name(script_name: str) -> str:
+    """Return the extensionless script identifier used for metadata/comparisons."""
+    return Path(script_name).stem
 
 
 @router.get("/status")
@@ -594,13 +606,14 @@ async def deploy_v2_script(
         # /home/hummingbot/conf/scripts mount and set SCRIPT_CONFIG correctly.
         if deployment.script and not deployment.script_config:
             script_config_filename = f"{deployment.instance_name}-{timestamp}.yml"
+            normalized_script_file_name = _normalize_script_file_name(deployment.script)
             script_config_content = {
-                "script_file_name": f"{deployment.script}.py",
+                "script_file_name": normalized_script_file_name,
             }
 
             # v2_with_controllers expects a controllers_config field in practice,
             # even when the deployment is used as a plain script entrypoint.
-            if deployment.script == "v2_with_controllers":
+            if _normalize_script_strategy_name(deployment.script) == "v2_with_controllers":
                 script_config_content["controllers_config"] = []
 
             scripts_dir = os.path.join("conf", "scripts")
@@ -626,7 +639,7 @@ async def deploy_v2_script(
                 bot_name=unique_instance_name,
                 instance_name=unique_instance_name,
                 strategy_type="script",
-                strategy_name=deployment.script or "default",
+                strategy_name=_normalize_script_strategy_name(deployment.script) if deployment.script else "default",
                 account_name=deployment.credentials_profile,
                 config_name=deployment.script_config,
                 image_version=deployment.image,
