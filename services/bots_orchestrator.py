@@ -26,7 +26,7 @@ class BotsOrchestrator:
     """Orchestrates Hummingbot instances using Docker and MQTT communication."""
 
     def __init__(self, broker_host, broker_port, broker_username, broker_password,
-                 performance_dump_interval: int = 5):
+                 db_manager: AsyncDatabaseManager, performance_dump_interval: int = 5):
         self.broker_host = broker_host
         self.broker_port = broker_port
         self.broker_username = broker_username
@@ -48,7 +48,10 @@ class BotsOrchestrator:
         # Controller performance dump (similar to AccountsService.dump_account_state)
         self.performance_dump_interval = performance_dump_interval * 60  # Convert minutes to seconds
         self._performance_dump_task: Optional[asyncio.Task] = None
-        self.db_manager = AsyncDatabaseManager(settings.database.url)
+
+        # Shared manager injected from main.py; tables are created once at startup,
+        # so no per-service bootstrap is needed here.
+        self.db_manager = db_manager
         self._db_initialized = False
 
         # MQTT manager will be started asynchronously later
