@@ -1,14 +1,28 @@
 import json
+import os
 from typing import Dict, List
 
 import yaml
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from starlette import status
 
 from models import Controller, ControllerType
 from utils.file_system import fs_util
 
 router = APIRouter(tags=["Controllers"], prefix="/controllers")
+
+
+def _resolve_bot_instance_dir(bot_name: str) -> str:
+    canonical = bot_name.replace("-", "_")
+    instances_path = os.path.join(fs_util.base_path, "instances")
+    matches = [
+        directory for directory in os.listdir(instances_path)
+        if directory.replace("-", "_").startswith(canonical)
+    ]
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"Bot '{bot_name}' not found")
+    return sorted(matches)[-1]
 
 
 @router.get("/", response_model=Dict[str, List[str]])
@@ -350,17 +364,34 @@ async def get_bot_controller_configs(bot_name: str):
     Raises:
         HTTPException: 404 if bot not found
     """
-    bots_config_path = f"instances/{bot_name}/conf/controllers"
-    if not fs_util.path_exists(bots_config_path):
-        raise HTTPException(status_code=404, detail=f"Bot '{bot_name}' not found")
+    instance_dir = _resolve_bot_instance_dir(bot_name)
+    bots_config_path = f"instances/{instance_dir}/conf/controllers"
 
     configs = []
-    for controller_file in fs_util.list_files(bots_config_path):
-        if controller_file.endswith('.yml'):
+    try:
+        controller_files = fs_util.list_files(bots_config_path)
+    except FileNotFoundError:
+        return JSONResponse(content=[])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Unable to list controller configs for bot '{bot_name}': {e}")
+
+    for controller_file in controller_files:
+        if not controller_file.endswith('.yml'):
+            continue
+
+        try:
             config = fs_util.read_yaml_file(f"{bots_config_path}/{controller_file}")
             config['_config_name'] = controller_file.replace('.yml', '')
             configs.append(config)
-    return configs
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Unable to read controller config '{controller_file}' for bot '{bot_name}': {e}"
+            )
+
+    return JSONResponse(content=configs)
 
 
 @router.post("/bots/{bot_name}/{controller_name}/config")
@@ -379,9 +410,8 @@ async def update_bot_controller_config(bot_name: str, controller_name: str, conf
     Raises:
         HTTPException: 404 if bot or controller not found, 400 if update error
     """
-    bots_config_path = f"instances/{bot_name}/conf/controllers"
-    if not fs_util.path_exists(bots_config_path):
-        raise HTTPException(status_code=404, detail=f"Bot '{bot_name}' not found")
+    instance_dir = _resolve_bot_instance_dir(bot_name)
+    bots_config_path = f"instances/{instance_dir}/conf/controllers"
 
     try:
         current_config = fs_util.read_yaml_file(f"{bots_config_path}/{controller_name}.yml")

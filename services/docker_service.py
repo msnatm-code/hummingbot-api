@@ -18,6 +18,7 @@ from utils.file_system import fs_util
 logger = logging.getLogger(__name__)
 
 
+
 class DockerService:
     # Class-level configuration for cleanup
     PULL_STATUS_MAX_AGE_SECONDS = 3600  # Keep status for 1 hour
@@ -238,6 +239,7 @@ class DockerService:
             else self._resolve_bots_host_path()
         )
         instance_name = config.instance_name
+        sanitized_instance_name = instance_name.replace("_", "-")
         instance_dir = os.path.join("bots", 'instances', instance_name)
         # Defense in depth: ensure the resolved paths stay within their allowed base directories
         # before any filesystem mutation (makedirs/copytree) takes place.
@@ -307,7 +309,7 @@ class DockerService:
         # Path relative to fs_util base_path (which is "bots")
         conf_file_path = f"instances/{instance_name}/conf/conf_client.yml"
         client_config = fs_util.read_yaml_file(conf_file_path)
-        client_config['instance_id'] = instance_name
+        client_config['instance_id'] = sanitized_instance_name
         fs_util.dump_dict_to_yaml(conf_file_path, client_config)
 
         # Set up Docker volumes. `bots_path` points to the host's shared `bots`
@@ -384,14 +386,15 @@ class DockerService:
         ]
 
         if config.script_config:
-            quickstart_parts[-1] += f' --script-conf "{config.script_config}" --config-password "{password}"'
+            quickstart_parts[-1] += f' --v2 "{config.script_config}" --config-password "{password}"'
 
         quickstart_command = " && ".join(quickstart_parts)
+        container_name = sanitized_instance_name
 
         try:
             self.client.containers.run(
                 image=config.image,
-                name=instance_name,
+                name=container_name,
                 command=["/bin/bash", "-lc", quickstart_command],
                 volumes=volumes,
                 environment=environment,
