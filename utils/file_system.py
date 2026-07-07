@@ -51,6 +51,10 @@ class FileSystemUtil:
         """
         return path if os.path.isabs(path) else os.path.join(self.base_path, path)
 
+    def resolve_path(self, path: str) -> str:
+        """Return the absolute filesystem path for a relative or absolute input path."""
+        return os.path.abspath(self._get_full_path(path))
+
     def list_files(self, directory: str) -> List[str]:
         """
         Lists all files in a given directory.

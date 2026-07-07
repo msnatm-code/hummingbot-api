@@ -365,6 +365,34 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": exc.errors()},
     )
 
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Ensure all HTTP errors are returned as JSON and logged consistently."""
+    logging.warning(
+        "HTTP error on %s %s: %s",
+        request.method,
+        request.url.path,
+        exc.detail,
+    )
+    detail = exc.detail if isinstance(exc.detail, dict) else {"message": exc.detail}
+    return JSONResponse(status_code=exc.status_code, content={"detail": detail})
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """Return JSON for unexpected exceptions instead of framework/plain-text fallbacks."""
+    logging.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "detail": {
+                "message": "Internal server error",
+                "error": str(exc),
+            }
+        },
+    )
+
 logfire.configure(send_to_logfire="if-token-present", environment=settings.app.logfire_environment,
                   service_name="hummingbot-api")
 logfire.instrument_fastapi(app)

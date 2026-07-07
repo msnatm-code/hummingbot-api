@@ -1,4 +1,6 @@
+
 import json
+import logging
 import os
 from typing import Dict, List
 
@@ -11,15 +13,47 @@ from models import Controller, ControllerType
 from utils.file_system import fs_util
 
 router = APIRouter(tags=["Controllers"], prefix="/controllers")
+logger = logging.getLogger(__name__)
+
+
+def _json_safe(value):
+    """Recursively normalize values so FastAPI/JSONResponse can serialize them reliably."""
+    if isinstance(value, dict):
+        return {str(key): _json_safe(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, tuple):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, set):
+        return sorted(_json_safe(item) for item in value)
+    try:
+        json.dumps(value)
+        return value
+    except TypeError:
+        return str(value)
 
 
 def _resolve_bot_instance_dir(bot_name: str) -> str:
     canonical = bot_name.replace("-", "_")
-    instances_path = os.path.join(fs_util.base_path, "instances")
-    matches = [
-        directory for directory in os.listdir(instances_path)
-        if directory.replace("-", "_").startswith(canonical)
-    ]
+    try:
+        instances_path = fs_util.resolve_path("instances")
+        matches = [
+            directory for directory in os.listdir(instances_path)
+            if directory.replace("-", "_").startswith(canonical)
+        ]
+    except FileNotFoundError:
+        logger.warning("Instances directory not found while resolving bot '%s'", bot_name)
+        raise HTTPException(status_code=404, detail=f"Bot '{bot_name}' not found")
+    except Exception as e:
+        logger.exception("Failed to resolve instance directory for bot '%s'", bot_name)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Unable to resolve instance directory for bot '{bot_name}'",
+                "error": str(e),
+            },
+        )
+
     if not matches:
         raise HTTPException(status_code=404, detail=f"Bot '{bot_name}' not found")
     return sorted(matches)[-1]
@@ -364,34 +398,49 @@ async def get_bot_controller_configs(bot_name: str):
     Raises:
         HTTPException: 404 if bot not found
     """
-    instance_dir = _resolve_bot_instance_dir(bot_name)
-    bots_config_path = f"instances/{instance_dir}/conf/controllers"
-
-    configs = []
     try:
+        instance_dir = _resolve_bot_instance_dir(bot_name)
+        bots_config_path = f"instances/{instance_dir}/conf/controllers"
+        configs = []
         controller_files = fs_util.list_files(bots_config_path)
+        for controller_file in controller_files:
+            if not controller_file.endswith('.yml'):
+                continue
+
+            try:
+                config = fs_util.read_yaml_file(f"{bots_config_path}/{controller_file}")
+                config['_config_name'] = controller_file.replace('.yml', '')
+                configs.append(_json_safe(config))
+            except FileNotFoundError:
+                continue
+            except Exception as e:
+                logger.exception(
+                    "Unable to read controller config '%s' for bot '%s'",
+                    controller_file,
+                    bot_name,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail={
+                        "message": f"Unable to read controller config '{controller_file}' for bot '{bot_name}'",
+                        "error": str(e),
+                    },
+                )
+
+        return configs
+    except HTTPException:
+        raise
     except FileNotFoundError:
-        return JSONResponse(content=[])
+        return []
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unable to list controller configs for bot '{bot_name}': {e}")
-
-    for controller_file in controller_files:
-        if not controller_file.endswith('.yml'):
-            continue
-
-        try:
-            config = fs_util.read_yaml_file(f"{bots_config_path}/{controller_file}")
-            config['_config_name'] = controller_file.replace('.yml', '')
-            configs.append(config)
-        except FileNotFoundError:
-            continue
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unable to read controller config '{controller_file}' for bot '{bot_name}': {e}"
-            )
-
-    return JSONResponse(content=configs)
+        logger.exception("Unexpected error while listing controller configs for bot '%s'", bot_name)
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": f"Unable to list controller configs for bot '{bot_name}'",
+                "error": str(e),
+            },
+        )
 
 
 @router.post("/bots/{bot_name}/{controller_name}/config")

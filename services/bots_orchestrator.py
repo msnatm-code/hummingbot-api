@@ -90,24 +90,28 @@ class BotsOrchestrator:
             try:
                 docker_bots = await self.get_active_containers()
                 mqtt_bots = self.mqtt_manager.get_discovered_bots(timeout_seconds=30)
-                all_active_bots = set([bot for bot in docker_bots + mqtt_bots if not self.is_bot_stopping(bot)])
+                docker_bots_canonical = {_to_canonical_bot_id(bot) for bot in docker_bots}
+                mqtt_bots_canonical = {_to_canonical_bot_id(bot) for bot in mqtt_bots}
+                all_active_bots = set([bot for bot in docker_bots if not self.is_bot_stopping(bot)])
 
                 for bot_name in list(self.active_bots):
-                    if bot_name not in all_active_bots:
+                    if _to_canonical_bot_id(bot_name) not in docker_bots_canonical:
                         self.mqtt_manager.clear_bot_data(bot_name)
                         del self.active_bots[bot_name]
 
                 for bot_name in all_active_bots:
-                    resolved_source = "mqtt" if bot_name in mqtt_bots else "docker"
-                    if bot_name not in self.active_bots:
-                        self.active_bots[bot_name] = {
+                    canonical_bot_name = _to_canonical_bot_id(bot_name)
+                    resolved_source = "docker+mqtt" if canonical_bot_name in mqtt_bots_canonical else "docker"
+                    resolved_bot_name = self._resolve_bot_name(bot_name) or bot_name
+                    if resolved_bot_name not in self.active_bots:
+                        self.active_bots[resolved_bot_name] = {
                             "bot_name": bot_name,
                             "status": "connected",
                             "source": resolved_source,
                         }
                         await self.mqtt_manager.subscribe_to_bot(bot_name)
                     else:
-                        self.active_bots[bot_name]["source"] = resolved_source
+                        self.active_bots[resolved_bot_name]["source"] = resolved_source
 
             except Exception as e:
                 logger.error(f"Error in update_active_bots: {e}", exc_info=True)
@@ -301,23 +305,36 @@ class BotsOrchestrator:
             performance = self.determine_controller_performance(controller_reports)
             error_logs = self.mqtt_manager.get_bot_error_logs(bot_name)
             general_logs = self.mqtt_manager.get_bot_logs(bot_name)
+            docker_bots = {_to_canonical_bot_id(name) for name in self._sync_get_active_containers()}
             discovered_bots = {
                 _to_canonical_bot_id(b)
                 for b in self.mqtt_manager.get_discovered_bots(timeout_seconds=30)
             }
             canonical = _to_canonical_bot_id(bot_name)
+            docker_running = canonical in docker_bots
             recently_active = canonical in discovered_bots
             active_source = self.active_bots.get(bot_name, {}).get("source", "unknown")
-            if recently_active:
-                status, source = "running", "mqtt"
+            if docker_running:
+                status = "running"
+                source = "docker"
+                connection_state = "healthy" if recently_active else "degraded"
+            elif recently_active:
+                status = "disconnected"
+                source = "mqtt"
+                connection_state = "mqtt_only"
             elif performance:
-                status = "idle"
-                source = "mqtt_discovered" if active_source == "mqtt" else active_source
+                status = "stopped"
+                source = active_source
+                connection_state = "stale"
             else:
                 status, source = "stopped", active_source
+                connection_state = "offline"
             return {"status": status, "source": source, "performance": performance,
-                    "error_logs": error_logs, "general_logs": general_logs, "recently_active": recently_active}
+                    "error_logs": error_logs, "general_logs": general_logs,
+                    "recently_active": recently_active, "docker_running": docker_running,
+                    "connection_state": connection_state}
         except Exception as e:
+            logger.exception("Failed to get bot status for '%s'", bot_name)
             return {"status": "error", "error": str(e)}
 
     def set_bot_stopping(self, bot_name: str):
