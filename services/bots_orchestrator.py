@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import re
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
@@ -202,15 +203,79 @@ class BotsOrchestrator:
                            strategy_type: str = None, strategy_name: str = None,
                            run_status: str = None, deployment_status: str = None,
                            limit: int = 100, offset: int = 0) -> List[Dict]:
-        """Return bot runs. Stub: returns empty list (no DB table)."""
-        return []
+        """Return runtime-derived bot runs when no persistent bot-run table is active."""
+        runtime_rows: List[Dict] = []
+        for current_bot_name in sorted(self.active_bots.keys()):
+            if self.is_bot_stopping(current_bot_name):
+                continue
+            status = self.get_bot_status(current_bot_name)
+            runtime_rows.append({
+                "id": None,
+                "bot_name": current_bot_name,
+                "account_name": account_name,
+                "strategy_type": strategy_type,
+                "strategy_name": strategy_name,
+                "run_status": (status.get("status") or "UNKNOWN").upper(),
+                "deployment_status": "DEPLOYED" if status.get("docker_running") else "KNOWN",
+                "created_at": None,
+                "updated_at": None,
+                "source": status.get("source"),
+                "classification": status.get("classification"),
+                "classification_reason": status.get("classification_reason"),
+                "recently_active": status.get("recently_active"),
+                "docker_running": status.get("docker_running"),
+                "mqtt_connected": status.get("mqtt_connected"),
+                "connection_state": status.get("connection_state"),
+            })
+
+        if not runtime_rows:
+            instances_root = Path(settings.app.controllers_path).resolve().parents[1] / "instances"
+            if instances_root.exists() and instances_root.is_dir():
+                for instance_dir in sorted(instances_root.iterdir()):
+                    if not instance_dir.is_dir():
+                        continue
+                    runtime_rows.append({
+                        "id": None,
+                        "bot_name": instance_dir.name,
+                        "account_name": account_name,
+                        "strategy_type": strategy_type,
+                        "strategy_name": strategy_name,
+                        "run_status": "STOPPED",
+                        "deployment_status": "KNOWN",
+                        "created_at": datetime.fromtimestamp(instance_dir.stat().st_ctime, timezone.utc).isoformat(),
+                        "updated_at": datetime.fromtimestamp(instance_dir.stat().st_mtime, timezone.utc).isoformat(),
+                        "source": "instances_dir",
+                        "classification": "historical_or_stale",
+                        "classification_reason": "Recovered from local instances directory after restart; no live runtime signal present.",
+                        "recently_active": False,
+                        "docker_running": False,
+                        "mqtt_connected": self.mqtt_manager.is_connected,
+                        "connection_state": "offline",
+                    })
+
+        if bot_name:
+            runtime_rows = [row for row in runtime_rows if row.get("bot_name") == bot_name]
+        if run_status:
+            runtime_rows = [row for row in runtime_rows if (row.get("run_status") or "").upper() == run_status.upper()]
+        if deployment_status:
+            runtime_rows = [row for row in runtime_rows if (row.get("deployment_status") or "").upper() == deployment_status.upper()]
+
+        return runtime_rows[offset:offset + limit]
 
     async def get_bot_run_stats(self) -> Dict:
-        """Return bot run statistics. Stub: returns zeros."""
-        return {"total": 0, "running": 0, "stopped": 0, "error": 0}
+        """Return runtime-derived bot run statistics when no persistent bot-run table is active."""
+        rows = await self.get_bot_runs(limit=10000, offset=0)
+        return {
+            "total": len(rows),
+            "running": sum(1 for row in rows if row.get("run_status") == "RUNNING"),
+            "stopped": sum(1 for row in rows if row.get("run_status") == "STOPPED"),
+            "error": sum(1 for row in rows if row.get("run_status") == "ERROR"),
+            "known": sum(1 for row in rows if row.get("deployment_status") == "KNOWN"),
+            "deployed": sum(1 for row in rows if row.get("deployment_status") == "DEPLOYED"),
+        }
 
     async def get_bot_run_by_id(self, bot_run_id: int) -> Optional[Dict]:
-        """Return a bot run by ID. Stub: always returns None."""
+        """Runtime-derived bot runs have no persistent numeric IDs in this fallback path."""
         return None
 
     async def delete_bot_run(self, bot_run_id: int) -> Optional[Dict]:
