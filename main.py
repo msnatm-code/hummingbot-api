@@ -52,6 +52,7 @@ from routers import (  # noqa: E402
     gateway,
     gateway_clmm,
     gateway_swap,
+    health,
     market_data,
     portfolio,
     rate_oracle,
@@ -440,6 +441,7 @@ app.include_router(backtesting.router, dependencies=[Depends(auth_user)])
 app.include_router(archived_bots.router, dependencies=[Depends(auth_user)])
 app.include_router(storage.router, dependencies=[Depends(auth_user)])
 app.include_router(system.router, dependencies=[Depends(auth_user)])
+app.include_router(health.router, dependencies=[Depends(auth_user)])
 
 app.include_router(executors.router, dependencies=[Depends(auth_user)])
 
