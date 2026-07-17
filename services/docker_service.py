@@ -402,6 +402,7 @@ class DockerService:
                 detach=True,
                 tty=True,
                 stdin_open=True,
+                restart_policy={"Name": "unless-stopped"},
                 log_config=log_config,
             )
             return {"success": True, "message": f"Instance {instance_name} created successfully."}
